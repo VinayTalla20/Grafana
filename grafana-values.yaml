@@ -1,0 +1,553 @@
+test_pod:
+  image: bats/bats:v1.1.0
+  pullPolicy: IfNotPresent
+
+loki:
+  enabled: false
+  isDefault: true
+  url: http://{{(include "loki.serviceName" .)}}:{{ .Values.loki.service.port }}
+  gateway:
+    enabled: true
+  image:
+    tag: 2.9.4
+  # read:
+  # replicas: 2
+  # write:
+  #   replicas: 1
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: logging
+            operator: In
+            values:
+            - grafana
+  tolerations:
+   - key: "logging"
+     operator: "Equal"
+     value: "grafana"
+     effect: "NoSchedule"
+  auth_enabled: false
+  # storage:
+  #   bucketNames:
+  #     chunks: chunks
+  #     ruler: ruler
+  #     admin: admin
+  #   type: azure
+  #   azure:
+  #     accountName: smartconxstgcontainerlog
+  #     endpointSuffix: blob.core.windows.net
+  #     requestTimeout: null
+  #     useFederatedToken: false
+  #     useManagedIdentity: false
+  #     userAssignedId: 3343d0b1-08f4-43ee-bd12-aee63794aae7
+  persistence:
+    type: pvc
+    enabled: true
+    size: 200Gi
+    storageClassName: blobstorage
+    existingClaim: pvc-blob
+  existingSecretForConfig: loki
+  config:
+    compactor:
+      compaction_interval: 10m
+      retention_enabled: true
+      retention_delete_delay: 2h
+      retention_delete_worker_count: 150
+      shared_store: filesystem
+      working_directory: /data/loki/boltdb-shipper-compactor
+    limits_config:
+      retention_period: 720h
+      # retention_stream:
+      # - selector: '{namespace="default"}'
+      #   priority: 1
+      #   period: 24h
+      # - selector: '{container="retention-test"}'
+      #   priority: 3
+      #   period: 24h
+      # - selector: '{namespace="kube-system"}'
+      #   priority: 2
+      #   period: 24h
+      enforce_metric_name: false
+      max_entries_limit_per_query: 500000
+      reject_old_samples: true
+      reject_old_samples_max_age: 168h
+    # query_range:
+    #   align_queries_with_step: true
+    #   parallelise_shardable_queries: false
+    server:
+      log_level: "error"
+    ruler:
+      storage:
+        type: local
+        local:
+          directory: /data/loki/rules
+      rule_path: /tmp/loki/rules
+      alertmanager_url: http://loki-prometheus-alertmanager:80
+      enable_alertmanager_discovery: false
+      ring:
+        kvstore:
+          store: inmemory
+      enable_api: true
+      enable_alertmanager_v2: true
+
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: http-metrics
+    initialDelaySeconds: 45
+  livenessProbe:
+    httpGet:
+      path: /ready
+      port: http-metrics
+    initialDelaySeconds: 45
+  datasource:
+    jsonData: {}
+    uid: ""
+
+promtail:
+  enabled: false
+  config:
+    logLevel: info
+    serverPort: 3101
+    clients:
+      - url: http://loki-write-headless:3100/loki/api/v1/push
+  tolerations:
+   - key: "logging"
+     operator: "Equal"
+     value: "grafana"
+     effect: "NoSchedule"
+    # snippets:
+    #   ScrapeConfigs: |
+    #    - job_name: cronjob-exclude
+    #      kubernetes_sd_configs:         
+    #      - role: pod    
+    #      relabel_configs:
+    #      - source_labels: [__meta_kubernetes_pod_label_Job-name]
+    #        action: drop
+    #        regex: syndication
+    #        target_label: namespaces
+
+fluent-bit:
+  enabled: false
+
+grafana:
+  enabled: true
+  plugins: 
+  - https://grafana.com/api/plugins/yesoreyeram-infinity-datasource/versions/3.1.0/download;yesoreyeram-infinity-datasource
+  # - grafana-clock-panel
+  ## You can also use other plugin download URL, as long as they are valid zip files,
+  ## and specify the name of the plugin after the semicolon. Like this:
+  # - https://grafana.com/api/plugins/marcusolsson-json-datasource/versions/1.3.2/download;marcusolsson-json-datasource
+  datasources:
+     datasources.yaml:
+       apiVersion: 1
+       deleteDatasources: 
+        - name: Loki
+          orgId: 1
+        - name: AzureResourcesAuth
+          orgId: 1
+        
+      # Mark provisioned data sources for deletion if they are no longer in a provisioning file.
+      # It takes no effect if data sources are already listed in the deleteDatasources section.
+      # prune: true   #Availiable in version 11.11
+       datasources:
+       - name: loki
+         type: loki
+         isDefault: true
+         uid: "loki"
+         access: proxy
+         enabled: true
+         url: http://loki-read:3100
+         jsonData:
+          timeout: 500
+          # maxLines: 5000000
+          httpHeaderName1: Connection
+          httpHeaderName2: Upgrade
+         secureJsonData:
+          httpHeaderValue1: Upgrade
+          httpHeaderValue2: websocket
+       - name: AzureResourcesAuth
+         type: grafana-azure-monitor-datasource
+         isDefault: false
+         uid: "azureauth"
+         access: proxy
+         readOnly: false
+         jsonData:
+           azureAuthType: msi
+         version: 1
+       - name: SmartConX-internalAPI
+         uid: "clusterdnsapi"
+         type: "yesoreyeram-infinity-datasource"
+         url: ""
+         basicAuth: false
+         basicAuthUser: ""
+         isDefault: false
+         jsonData:
+           allowedHosts:
+             - "https://collab-service.syndication.svc.cluster.local"
+           global_queries: []
+           tlsAuth: false
+           tlsSkipVerify: true
+           timeoutInSeconds: 180
+         readOnly: false
+         secureJsonData:
+           httpHeaderValue1: "xxxxxxx"
+       - name: Mongodb-API-Datasource
+         uid: "mongodbdataapi"
+         type: "yesoreyeram-infinity-datasource"
+         url: ""
+         basicAuth: false
+         basicAuthUser: ""
+         isDefault: false
+         jsonData:
+          allowedHosts:
+            - "http://mongodb-data-api.logging.svc.cluster.local:3000"
+          customHealthCheckEnabled: true
+          customHealthCheckUrl: "http://mongodb-data-api.logging.svc.cluster.local:3000/healthz"
+          global_queries: []
+          tlsAuth: false
+          tlsSkipVerify: true
+          timeoutInSeconds: 180
+          readOnly: false
+          secureJsonData:
+            httpHeaderValue1: "xxxxxxx"           
+          
+  sidecar:
+    datasources:
+      label: ""
+      labelValue: ""
+      enabled: false
+      # maxLines: 500000
+    # dashboards:
+    #   enabled: true
+    #   # label that the configmaps with dashboards are marked with
+    #   label: grafana_dashboard
+    #   # value of label that the configmaps with dashboards are set to
+    #   labelValue: smartconx-dashboards
+    #   # Namespaces list. If specified, the sidecar will search for config-maps/secrets inside these namespaces.
+    #   # Otherwise the namespace in which the sidecar is running will be used.
+    #   # It's also possible to specify ALL to search in all namespaces.
+    #   searchNamespace: ALL
+    #   # Method to use to detect ConfigMap changes. With WATCH the sidecar will do a WATCH requests, with SLEEP it will list all ConfigMaps, then sleep for 60 seconds.
+    #   watchMethod: WATCH
+    #   # search in configmap, secret or both
+    #   resource: configmap
+    #   # provider configuration that lets grafana manage the dashboards
+    #   provider:
+    #     # name of the provider, should be unique
+    #     name: sidecarProvider
+    #     # orgid as configured in grafana
+    #     orgid: 1
+    #     # folder in which the dashboards should be imported in grafana
+    #     folder: 'SmartConx'
+    #     # <string> folder UID. will be automatically generated if not specified
+    #     folderUid: ''
+    #     # type of the provider
+    #     type: file
+    #     # disableDelete to activate a import-only behaviour
+    #     disableDelete: false
+    #     # allow updating provisioned dashboards from the UI
+    #     allowUiUpdates: false
+    #     # allow Grafana to replicate dashboard structure from filesystem
+    #     foldersFromFilesStructure: false
+  image:
+    repository: smartconxprod.azurecr.io/grafana/grafana
+    tag: 10.4.0
+    pullSecrets: 
+    - acrsecret
+  # replicas: 2
+  admin:
+    existingSecret: azure-aad
+    userKey: admin-user
+    passwordKey: admin-password
+  
+  readinessProbe:
+    httpGet:
+      path: /api/health
+      port: 3000
+      scheme: HTTPS
+
+  livenessProbe:
+    httpGet:
+      path: /api/health
+      port: 3000
+      scheme: HTTPS
+    initialDelaySeconds: 60
+    timeoutSeconds: 30
+    failureThreshold: 10
+
+  env:
+    # GF_DEFAULT_APP_MODE: development
+    GF_FEATURE_TOGGLES_ENABLE: logsInfiniteScrolling
+    GF_SERVER_DOMAIN: DOMAIN_URL
+    GF_SERVER_ROOT_URL: https://DOMAIN_URL/grafana/
+    GF_SERVER_SERVE_FROM_SUB_PATH: true
+    GF_SERVER_PROTOCOL: https
+    GF_SERVER_ENFORCE_DOMAIN: False
+    GF_SERVER_CERT_FILE: /etc/certs/grafana.crt
+    GF_SERVER_CERT_KEY: /etc/certs/grafana.key
+  envValueFrom:
+    GF_AUTH_AZUREAD_CLIENT_ID:
+        secretKeyRef:
+          name: azure-aad
+          key: client_id
+    GF_AUTH_AZUREAD_CLIENT_SECRET:
+        secretKeyRef:
+          name: azure-aad
+          key: client_secret
+         #GF_SECURITY_ADMIN_USER:
+            #secretKeyRef:
+            # key: admin-user
+            #name: azure-aad
+            #GF_SECURITY_ADMIN_PASSWORD:
+            #secretKeyRef:
+            #key: admin-password
+            #name: azure-aad
+  persistence:
+    type: pvc
+    enabled: true
+    size: 8Gi
+    storageClassName: grafana
+    existingClaim: pvc-grafana
+  # extraPvcLabels: 
+  #   type: pvc
+  #   enabled: true
+  #   size: 8Gi
+  #   storageClassName: grafana
+  #   existingClaim: pvc-grafana
+
+  service:
+    enabled: true
+    type: ClusterIP
+    port: 443
+    targetPort: 3000
+      # targetPort: 4181 To be used with a proxy extraContainer
+    ## Service annotations. Can be templated.
+    portName: service
+
+  extraConfigmapMounts:
+    - name: customtemplate-volume
+      mountPath: /usr/share/grafana/public/emails/ng_alert_notification.html
+      subPath: ng_alert_notification.html
+      configMap: customtemplate
+  
+  alerting:
+     delete_rules.yaml:
+       apiVersion: 1
+       deleteRules: 
+       - orgId: 1 
+         uid: podfailure_id
+       - orgId: 1
+         uid: dummy_alertid
+       - orgId: 1
+         uid: dummy_alertid2  
+       - orgId: 1
+         uid: nodecpu_id        
+         
+     contact_points_test.yaml:
+       apiVersion: 1
+       contactPoints: 
+       - orgId: 1
+         name: helm_contact_points
+         receivers:
+         - uid: helm_mail_id
+           type: email
+           disableResolveMessage: true
+           settings: 
+             addresses: <>
+
+  grafana.ini:
+      smtp:
+        enabled: true
+        host: smtp.office365.com:587
+        user: cron@itdtech.com
+        password: PG73NujEhi8FOma
+        skip_verify: true
+        from_name: Grafana_STG_ICS
+        from_address: cron@itdtech.com
+      users:
+        viewers_can_edit: true
+      auth.azuread:
+        name: Azure AD
+        enabled: true
+        allow_sign_up: true
+        scopes: openid email profile
+        auth_url: https://login.microsoftonline.com/e55fe08a-e4e3-4627-ad40-d9961c612aaa/oauth2/v2.0/authorize
+        token_url: https://login.microsoftonline.com/e55fe08a-e4e3-4627-ad40-d9961c612aaa/oauth2/v2.0/token
+        allow_assign_grafana_admin: false
+      azure: 
+        managed_identity_enabled: true
+        managed_identity_client_id: AZURE_RESOURCES_MANAGED_IDENTITY_CLIENT_ID
+      database:
+        type: sqlite3 # by default it will be sqlite3
+        wal: true  # For “sqlite3” only. Setting to enable/disable Write-Ahead Logging. The default value is false (disabled).
+      plugin.yesoreyeram-infinity-datasource:
+        pagination_max_pages: 10
+
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: logging
+            operator: In
+            values:
+            - grafana
+  tolerations:
+   - key: "logging"
+     operator: "Equal"
+     value: "grafana"
+     effect: "NoSchedule"
+  
+
+prometheus:
+  enabled: true
+  isDefault: false
+  url: http://{{ include "prometheus.fullname" .}}:{{ .Values.prometheus.server.service.servicePort }}{{ .Values.prometheus.server.prefixURL }}
+  datasource:
+    jsonData: {}
+  alertmanager:
+    enabled: false
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: logging
+              operator: In
+              values:
+              - grafana
+    tolerations:
+    - key: "logging"
+      operator: "Equal"
+      value: "grafana"
+      effect: "NoSchedule" 
+    persistentVolume:
+      enabled: false
+      size: 16Gi
+      storageClass: grafana
+      existingClaim: pvc-prometheus
+  server:
+    # extraFlags:
+    # - enable-feature=memory-snapshot-on-shutdown
+    defaultFlagsOverride:
+    - --storage.tsdb.retention.time=30d
+    - --config.file=/etc/config/prometheus.yml
+    - --storage.tsdb.path=/data
+    - --web.console.libraries=/etc/prometheus/console_libraries
+    - --web.console.templates=/etc/prometheus/consoles
+    - --enable-feature=memory-snapshot-on-shutdown
+    - --storage.tsdb.wal-compression
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: logging
+              operator: In
+              values:
+              - grafana
+    tolerations:
+    - key: "logging"
+      operator: "Equal"
+      value: "grafana"
+      effect: "NoSchedule"
+    persistentVolume:
+      enabled: true
+      size: 16Gi
+      storageClass: grafana
+      existingClaim: pvc-prometheus
+    # resources: 
+    #   requests:
+    #      memory: 250Mi
+  kube-state-metrics: 
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+          - matchExpressions:
+            - key: logging
+              operator: In
+              values:
+              - grafana
+    tolerations:
+    - key: "logging"
+      operator: "Equal"
+      value: "grafana"
+      effect: "NoSchedule" 
+  prometheus-pushgateway:
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+          - matchExpressions: 
+            - key: logging
+              operator: In
+              values:
+              - grafana
+    tolerations:
+    - key: "logging"
+      operator: "Equal"
+      value: "grafana"
+      effect: "NoSchedule"            
+          
+filebeat:
+  enabled: false
+  filebeatConfig:
+    filebeat.yml: |
+      # logging.level: debug
+      filebeat.inputs:
+      - type: container
+        paths:
+          - /var/log/containers/*.log
+        processors:
+        - add_kubernetes_metadata:
+            host: ${NODE_NAME}
+            matchers:
+            - logs_path:
+                logs_path: "/var/log/containers/"
+      output.logstash:
+        hosts: ["logstash-loki:5044"]
+
+logstash:
+  enabled: false
+  image: grafana/logstash-output-loki
+  imageTag: 1.0.1
+  filters:
+    main: |-
+      filter {
+        if [kubernetes] {
+          mutate {
+            add_field => {
+              "container_name" => "%{[kubernetes][container][name]}"
+              "namespace" => "%{[kubernetes][namespace]}"
+              "pod" => "%{[kubernetes][pod][name]}"
+            }
+            replace => { "host" => "%{[kubernetes][node][name]}"}
+          }
+        }
+        mutate {
+          remove_field => ["tags"]
+        }
+      }
+  outputs:
+    main: |-
+      output {
+        loki {
+          url => "http://loki:3100/loki/api/v1/push"
+          #username => "test"
+          #password => "test"
+        }
+        # stdout { codec => rubydebug }
+      }
+
+# proxy is currently only used by loki test pod
+# Note: If http_proxy/https_proxy are set, then no_proxy should include the
+# loki service name, so that tests are able to communicate with the loki
+# service.
+proxy:
+  http_proxy: ""
+  https_proxy: ""
+  no_proxy: ""
