@@ -1,0 +1,7 @@
+{{ define "email.sev1" }}
+{{ if gt (len .Alerts.Firing) 0 }}
+[SEV 1] [FIRING] : {{ index (index .Alerts.Firing 0).Labels "alertname" }}
+{{ else if gt (len .Alerts.Resolved) 0 }}
+[SEV 1] [RESOLVED]: {{ index (index .Alerts.Resolved 0).Labels "alertname" }}
+{{ end }}
+{{ end }}
